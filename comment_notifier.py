@@ -4,8 +4,15 @@
 
 import smtplib
 from email.mime.text import MIMEText
+from email.header import Header
+from email.utils import formataddr, parseaddr
 from datetime import datetime
-import configparser
+
+try:
+    from ConfigParser import ConfigParser
+except:
+    from configparser import ConfigParser
+
 import requests
 import logging, logging.handlers
 import platform
@@ -77,7 +84,7 @@ def set_logger():
 
 
 def get_config():
-    conf = configparser.ConfigParser()
+    conf = ConfigParser()
     try:
         conf.read(config_file)  # 请将配置文件放在当前目录下
     except IOError as e:
@@ -89,30 +96,35 @@ def get_config():
     logger.debug(u'读取配置文件')
 
 
+def format_email_header(s):
+    name, addr = parseaddr(s)
+    return formataddr((Header(name, 'utf-8').encode(), addr.encode('utf-8') if isinstance(addr, unicode) else addr))
+
+
 def generate_message(content, message_type=None):
     now = datetime.strftime(datetime.now(), '%Y-%m-%d %H:%M')
     if message_type == 'comment':
-        me_header = '多说评论提醒'
+        me_header = u'多说评论提醒'
         sub = u'新评论提醒{0}'
     else:
         # when message_type is 'log'
-        me_header = 'Comment notifier日志'
+        me_header = u'Comment notifier日志'
         sub = u'脚本出现错误{0}'
     me = me_header + '<' + config['from_address'] + '>'
     msg = MIMEText(content, _subtype='plain', _charset='utf-8')
-    msg['Subject'] = sub.format(now)
-    msg['From'] = me
+    msg['Subject'] = Header(sub.format(now), 'utf-8').encode()
+    msg['From'] = format_email_header(me)
     msg['To'] = config['to_address']
-    return msg, me
+    return msg
 
 
 def send_email(content, message_type=None):
-    msg, me = generate_message(content, message_type)
+    msg = generate_message(content, message_type)
     try:
         server = smtplib.SMTP(timeout=10)
         server.connect(config['email_host'])
         server.login(config['from_address'], config['email_password'])
-        server.sendmail(me, config['to_address'], msg.as_string())
+        server.sendmail(config['from_address'], config['to_address'], msg.as_string())
         logger.debug(u'邮件发送成功')
         server.quit()
     except Exception as e:
@@ -161,14 +173,15 @@ def get_article_title(meta):
 
 
 def email_content(comment_count, metas):
-    header = u'你有%d条新评论\n' % comment_count
-    logger.debug(header + u'，正在生成邮件内容')
+    header = u'你有%d条新评论' % comment_count
+    log_msg = header + u'，正在生成邮件内容'
+    logger.debug(log_msg)
     if comment_count > 20:
         duoshuo_url = 'http://duoshuo.com/'
         content = u'你很厉害\n' + header \
                   + u'(由于新评论数过多，请登录 %s 查看详情~.~)' % duoshuo_url
         return content
-    content = [header, ]
+    content = [header + u'\n', ]
     for index, meta in enumerate(metas):
         meta['created_at'] = meta['created_at'].replace('T', ' ').replace('+08:00', '')
         meta['thread_key'] = get_article_title(meta)
@@ -208,7 +221,8 @@ def monitor():
         content = handler()
         if content:
             send_email(content, message_type='comment')
-        logger.debug(u'暂时还没有新评论')
+        else:
+            logger.debug(u'暂时还没有新评论')
         if period_of_check > 0:
             logger.debug(u'正在等待({0}s)下一次检查...'.format(period_of_check))
             time.sleep(period_of_check)
