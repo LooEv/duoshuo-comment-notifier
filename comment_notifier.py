@@ -17,7 +17,11 @@ import requests
 import logging, logging.handlers
 import platform
 import time
+import sys
 import os
+
+if sys.version_info[0] >= 3:
+    unicode = str
 
 config = {}
 dir_name = os.path.dirname(os.path.abspath(__file__))
@@ -98,7 +102,7 @@ def get_config():
 
 def format_email_header(s):
     name, addr = parseaddr(s)
-    return formataddr((Header(name, 'utf-8').encode(), addr.encode('utf-8') if isinstance(addr, unicode) else addr))
+    return formataddr((Header(name, 'utf-8').encode(), addr))
 
 
 def generate_message(content, message_type=None):
