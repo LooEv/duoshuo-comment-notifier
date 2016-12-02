@@ -22,6 +22,7 @@ import os
 
 if sys.version_info[0] >= 3:
     unicode = str
+    xrange = range
 
 config = {}
 dir_name = os.path.dirname(os.path.abspath(__file__))
