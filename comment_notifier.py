@@ -180,13 +180,15 @@ def generate_email_msg(content, message_type=None):
     if message_type == 'comment':
         me_header = u'多说评论提醒'
         sub = u'新评论提醒{0}'
+        _subtype = 'html'
+        content = '<html><body>' + content + '</body></html>'
     else:
         # when message_type is 'log'
         me_header = u'Comment notifier日志'
         sub = u'脚本出现错误{0}'
+        _subtype = 'plain'
     me = me_header + '<' + config['from_address'] + '>'
-    content = '<html><body>' + content + '</body></html>'
-    msg = MIMEText(content, _subtype='html', _charset='utf-8')
+    msg = MIMEText(content, _subtype=_subtype, _charset='utf-8')
     msg['Subject'] = Header(sub.format(now), 'utf-8').encode()
     msg['From'] = format_email_header(me)
     msg['To'] = config['to_address']
