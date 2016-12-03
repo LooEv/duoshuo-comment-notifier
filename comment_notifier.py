@@ -132,7 +132,7 @@ def get_duoshuo_log(url):
 
 
 def get_article_title(meta):
-    article_info_url = template['article_info_url'] % (meta['thread_key'], config['short_name'])
+    article_info_url = template['article_info_url'] % (unicode(meta['thread_key']), config['short_name'])
     try:
         req = requests.get(article_info_url, timeout=10)
         data = req.json()
