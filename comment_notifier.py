@@ -28,6 +28,7 @@ config = {}
 dir_name = os.path.dirname(os.path.abspath(__file__))
 config_file = dir_name + os.sep + '_config.conf'
 action_counter_file = dir_name + os.sep + 'action_counter.log'
+duoshuo_url = 'http://duoshuo.com/'
 
 # log_url 用于获取多说评论后台操作日志，所有的评论都包括在里面
 # article_info_url 可以获取指定的某一篇文章的评论，此脚本用于获取该文章的标题
@@ -68,7 +69,6 @@ class BufferingSMTPHandler(logging.handlers.BufferingHandler):
             del content
 
 
-# 如果你修改脚本之后运行没有问题了，请修改日志级别，以防日志文件过大
 def set_logger():
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.DEBUG)
@@ -101,41 +101,6 @@ def get_config():
     logger.debug(u'读取配置文件')
 
 
-def format_email_header(s):
-    name, addr = parseaddr(s)
-    return formataddr((Header(name, 'utf-8').encode(), addr))
-
-
-def generate_message(content, message_type=None):
-    now = datetime.strftime(datetime.now(), '%Y-%m-%d %H:%M')
-    if message_type == 'comment':
-        me_header = u'多说评论提醒'
-        sub = u'新评论提醒{0}'
-    else:
-        # when message_type is 'log'
-        me_header = u'Comment notifier日志'
-        sub = u'脚本出现错误{0}'
-    me = me_header + '<' + config['from_address'] + '>'
-    msg = MIMEText(content, _subtype='plain', _charset='utf-8')
-    msg['Subject'] = Header(sub.format(now), 'utf-8').encode()
-    msg['From'] = format_email_header(me)
-    msg['To'] = config['to_address']
-    return msg
-
-
-def send_email(content, message_type=None):
-    msg = generate_message(content, message_type)
-    try:
-        server = smtplib.SMTP(timeout=10)
-        server.connect(config['email_host'])
-        server.login(config['from_address'], config['email_password'])
-        server.sendmail(config['from_address'], config['to_address'], msg.as_string())
-        logger.debug(u'邮件发送成功')
-        server.quit()
-    except Exception as e:
-        logger.exception(e)
-
-
 def get_duoshuo_log(url):
     first = False
     if os.path.isfile(action_counter_file):
@@ -146,7 +111,10 @@ def get_duoshuo_log(url):
         last_counter = 0
         first = True
     try:
-        req = requests.get(url, timeout=10)
+        my_headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/51.0.2704.103 Safari/537.36',
+            'Accept-Encoding': 'gzip'}
+        req = requests.get(url, headers=my_headers, timeout=10)
         data = req.json()
         if data['code'] == 0:
             logger.debug(u'获取多说评论后台操作日志成功')
@@ -172,7 +140,7 @@ def get_article_title(meta):
             article_title = data['thread']['title']
             return unicode(article_title)
         else:
-            return meta['thread_key']
+            return unicode(meta['thread_key'])
     except Exception as e:
         logger.exception(e)
 
@@ -182,20 +150,60 @@ def email_content(comment_count, metas):
     log_msg = header + u'，正在生成邮件内容'
     logger.debug(log_msg)
     if comment_count > 20:
-        duoshuo_url = 'http://duoshuo.com/'
-        content = u'你很厉害\n' + header \
-                  + u'(由于新评论数过多，请登录 %s 查看详情~.~)' % duoshuo_url
+        content = u'<p>你很厉害<br>' + header \
+                  + u'<br>(由于新评论数过多，请登录 %s 查看详情~.~)</p>' % duoshuo_url
         return content
-    content = [header + u'\n', ]
+    content = ['<p>' + header + '<br></p>', ]
     for index, meta in enumerate(metas):
+        thread_key = meta['thread_key']  # 备份原始 thread_key，用于合成你的文章网址
         meta['created_at'] = meta['created_at'].replace('T', ' ').replace('+08:00', '')
         meta['thread_key'] = get_article_title(meta)
-        order = u'第%d条新评论：\n' % (index + 1)
+        if comment_count == 1:
+            order = ''
+        else:
+            order = u'第%d条新评论：<br>' % (index + 1)
+        meta['message'] = meta['message'].replace(r'\/', r'/').replace(r'\"', r'"')
         comment_info = template['comment_info'] % meta
-        click = u'\n点击查看：{0}{1}\n'.format(config['myself_author_url'], unicode(meta.get('thread_key')))
-        comment = order + '\n'.join(line.strip() for line in comment_info.splitlines()) + click
+        click = u'<br>点击查看：{0}{1}<br>'.format(config['myself_author_url'], unicode(thread_key))
+        comment = '<p>' + order + '<br>'.join(line.strip() for line in comment_info.splitlines()) + click + '</p>'
         content.append(comment)
-    return '\n'.join(content)
+    return ''.join(content)
+
+
+def format_email_header(s):
+    name, addr = parseaddr(s)
+    return formataddr((Header(name, 'utf-8').encode(), addr))
+
+
+def generate_email_msg(content, message_type=None):
+    now = datetime.strftime(datetime.now(), '%Y-%m-%d %H:%M')
+    if message_type == 'comment':
+        me_header = u'多说评论提醒'
+        sub = u'新评论提醒{0}'
+    else:
+        # when message_type is 'log'
+        me_header = u'Comment notifier日志'
+        sub = u'脚本出现错误{0}'
+    me = me_header + '<' + config['from_address'] + '>'
+    content = '<html><body>' + content + '</body></html>'
+    msg = MIMEText(content, _subtype='html', _charset='utf-8')
+    msg['Subject'] = Header(sub.format(now), 'utf-8').encode()
+    msg['From'] = format_email_header(me)
+    msg['To'] = config['to_address']
+    return msg
+
+
+def send_email(content, message_type=None):
+    msg = generate_email_msg(content, message_type)
+    try:
+        server = smtplib.SMTP(timeout=10)
+        server.connect(config['email_host'])
+        server.login(config['from_address'], config['email_password'])
+        server.sendmail(config['from_address'], config['to_address'], msg.as_string())
+        logger.debug(u'邮件发送成功')
+        server.quit()
+    except Exception as e:
+        logger.exception(e)
 
 
 def handler():
