@@ -1,5 +1,5 @@
 ## 介绍
-如果你的博客使用了多说评论，那么很不幸，你的博客有了新留言你收不到提醒。多说评论系统设定的是只有别人回复了你的留言才会邮件通知你。虽然刚开始写博客的时候，给我们留言的人很少，或者也许以后也没有多少留言（**此处应该有一个笑哭的表情**，此刻看看窗外，那只猫也在嘲笑我），不过如果有人给我们留言了，那我们及时回复他也是一种尊重他的表现，所以用 python 编写了一个脚本解决多说评论的不完美提醒。
+如果你的博客使用了多说评论，那么很不幸，你的博客有了新留言你收不到提醒。多说评论系统设定的是只有别人回复了你的留言才会邮件通知你。虽然刚开始写博客的时候，给我们留言的人很少，或者也许以后也没有多少留言（**此处应该有一个笑哭的表情**，此刻看看窗外，那只猫也在嘲笑我），不过如果有人给我们留言了，那我们及时回复他也是一种尊重他的表现，所以用 python 编写了一个脚本解决多说评论的不完美提醒。<!-- more -->
 
 ## Requirement
 * **python 2.7** 以及 **python 3** 都可运行；
@@ -19,19 +19,7 @@ pip install requests
 ![效果展示2](http://ocf3ikxr2.bkt.clouddn.com/python/duoshuo_comments2.png)
 
 -----
-## 兼容python2和3
-```python
-try:
-    from ConfigParser import ConfigParser
-except:
-    from configparser import ConfigParser
-
-if sys.version_info[0] >= 3:
-    unicode = str
-    xrange = range
-```
-
-## 配置文件
+## 配置文件 (_config.conf)
 ```
 [duoshuo_account]
 short_name = 你在多说评论站点注册的多说二级域名
@@ -52,7 +40,48 @@ period = xxx （检查是否有新评论的间隔周期，单位秒）
 
 elif 你没有 vps，使用的是 Windows，那么只能使用 Windows 自带的创建计划任务功能开机自运行脚本，此时就需要 `period_of_check` 这个配置。
 
-## 全局说明
+## 使用方法
+**第一步**：
+```bash
+git clone https://github.com/LooEv/duoshuo-comment-notifier.git
+```
+然后编辑 `_config.conf` 文件，将自己的配置信息填写完整。
+
+**第二步，设置定时运行脚本**：
+在 Linux中，运行下面的命令：
+```bash
+sudo crontab -u root -e	# 修改root用户的crontab文件
+```
+添加下面的内容：
+```bash
+0,30 8-23 * * * /usr/bin/env python your_path/comment_notifier.py >/dev/null 2>&1
+# 每天8点到23点之间每隔30分钟执行脚本
+
+* 8-23/1 * * * /usr/bin/env python your_path/comment_notifier.py >/dev/null 2>&1
+# 或者每天8点到23点之间每隔1小时执行脚本
+
+* 8-23/5 * * * /usr/bin/env python your_path/comment_notifier.py >/dev/null 2>&1
+# 或者每天8点到23点之间每隔5小时执行脚本
+```
+视自己的情况而定，选择适当的间隔周期执行脚本。
+`>/dev/null 2>&1` 表示将脚本的标准输出流和标准错误流都不显示（不用担心，脚本设置的日志文件依然会产生，以便我们发现问题所在），防止 crontab 产生的日志文件过大。
+**注意**：如果你正在使用多个版本的 python，请自行修改上面代码中的 `/usr/bin/env python`，尽量将执行这个脚本的python的路径定死，并确保该python版本环境下安装了所需的第三方库。
+在Windows系统中开机自启动脚本的方法这里就不介绍了，请自行 google。
+
+## 实现细节
+### 兼容python2和3
+```python
+try:
+    from ConfigParser import ConfigParser
+except:
+    from configparser import ConfigParser
+
+if sys.version_info[0] >= 3:
+    unicode = str
+    xrange = range
+```
+
+### 全局说明
 ```python
 config = {}
 dir_name = os.path.dirname(os.path.abspath(__file__))
@@ -77,7 +106,7 @@ template = {
 }
 ```
 
-## 函数说明
+### 函数说明
 * **get_config()：获取配置**
 
 * **设置日志器**
@@ -255,25 +284,3 @@ def monitor():
             break
 ```
   如果你运行这个脚本的系统是 Linux，那么运行一次就结束，因为使用的是 crontab 设置的定时任务，就没有必要 time.sleep(x)了。如果是 Windows系统，就一直运行这个脚本，并间隔一定的周期检查是否有新的评论。
-
-## 定时运行脚本
-在 Linux中，运行下面的命令：
-```bash
-sudo crontab -u root -e	# 修改root用户的crontab文件
-```
-添加下面的内容：
-```bash
-0,30 8-23 * * * /usr/bin/env python your_path/email_notifier.py >/dev/null 2>&1
-# 每天8点到23点之间每隔30分钟执行脚本
-
-* 8-23/1 * * * /usr/bin/env python your_path/email_notifier.py >/dev/null 2>&1
-# 或者每天8点到23点之间每隔1小时执行脚本
-
-* 8-23/5 * * * /usr/bin/env python your_path/email_notifier.py >/dev/null 2>&1
-# 或者每天8点到23点之间每隔5小时执行脚本
-```
-视自己的情况而定，选择适当的间隔周期执行脚本。
-`>/dev/null 2>&1` 表示将脚本的标准输出流和标准错误流都不显示（不用担心，脚本设置的日志文件依然会产生，以便我们发现问题所在），防止 crontab 产生的日志文件过大。
-**注意**：如果你正在使用多个版本的 python，请自行修改上面代码中的 `/usr/bin/env python`，尽量将执行这个脚本的python的路径定死，并确保该python版本环境下安装了所需的第三方库。
-
-**在Windows系统中开机自启动脚本的方法这里就不介绍了，请自行 google。**
