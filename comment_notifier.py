@@ -105,7 +105,7 @@ def get_duoshuo_log(url):
     first = False
     if os.path.isfile(action_counter_file):
         f = open(action_counter_file)
-        last_counter = int(f.read())
+        last_counter = int(f.read().splitlines()[0])
     else:
         logger.debug(u'没有找到action_counter.log文件，我假设你博客的留言你已经全部看过，也就是没有新留言！')
         last_counter = 0
@@ -119,11 +119,11 @@ def get_duoshuo_log(url):
         if data['code'] == 0:
             logger.debug(u'获取多说评论后台操作日志成功')
             counter = len(data['response'])
+            with open(action_counter_file, 'w') as f:
+                f.write(str(counter))
             if counter == 0:
                 return
             if last_counter != counter:
-                with open(action_counter_file, 'w') as f:
-                    f.write(str(counter))
                 if first:
                     return
                 return data, last_counter, counter
@@ -252,3 +252,5 @@ if __name__ == '__main__':
     finally:
         # 如果脚本出现问题，确保日志会通过邮件发送给你
         logging.shutdown()
+        with open(action_counter_file, 'a') as f:
+            f.write('\nlast checked time: ' + time.ctime())

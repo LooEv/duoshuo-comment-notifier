@@ -43,7 +43,7 @@ elif 你没有 vps，使用的是 Windows，那么只能使用 Windows 自带的
 ## 使用方法
 **第一步**：
 ```bash
-git clone https://github.com/LooEv/duoshuo-comment-notifier.git
+git clone https://github.com/LooEv/duoshuo-comment-notifier.git ~/duoshuo-comment-notifier
 ```
 然后编辑 `_config.conf` 文件，将自己的配置信息填写完整。
 
@@ -54,13 +54,13 @@ sudo crontab -u root -e	# 修改root用户的crontab文件
 ```
 添加下面的内容：
 ```bash
-0,30 8-23 * * * /usr/bin/env python your_path/comment_notifier.py >/dev/null 2>&1
+0,30 8-23 * * * /usr/bin/env python ~/duoshuo-comment-notifier/comment_notifier.py >/dev/null 2>&1
 # 每天8点到23点之间每隔30分钟执行脚本
 
-* 8-23/1 * * * /usr/bin/env python your_path/comment_notifier.py >/dev/null 2>&1
+* 8-23/1 * * * /usr/bin/env python ~/duoshuo-comment-notifier/comment_notifier.py >/dev/null 2>&1
 # 或者每天8点到23点之间每隔1小时执行脚本
 
-* 8-23/5 * * * /usr/bin/env python your_path/comment_notifier.py >/dev/null 2>&1
+* 8-23/5 * * * /usr/bin/env python ~/duoshuo-comment-notifier/comment_notifier.py >/dev/null 2>&1
 # 或者每天8点到23点之间每隔5小时执行脚本
 ```
 视自己的情况而定，选择适当的间隔周期执行脚本。
