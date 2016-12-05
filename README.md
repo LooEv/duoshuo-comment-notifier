@@ -52,7 +52,7 @@ chmod +x ~/duoshuo-comment-notifier/comment_notifier.py	#这一步很重要！
 **第二步，设置定时运行脚本**：
 在 Linux中，运行下面的命令：
 ```bash
-sudo crontab -u root -e	# 修改root用户的crontab文件
+crontab -e	# 编辑当前用户的crontab文件
 ```
 添加下面的内容：
 ```bash
