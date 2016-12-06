@@ -43,16 +43,16 @@ elif 你没有 vps，使用的是 Windows，那么只能使用 Windows 自带的
 ## 使用方法
 **第一步**：
 ```bash
-git clone https://github.com/LooEv/duoshuo-comment-notifier.git ~/duoshuo-comment-notifier
+$ git clone https://github.com/LooEv/duoshuo-comment-notifier.git ~/duoshuo-comment-notifier
 
-chmod +x ~/duoshuo-comment-notifier/comment_notifier.py	#这一步很重要！
+$ chmod +x ~/duoshuo-comment-notifier/comment_notifier.py	#这一步很重要！
 ```
 然后编辑 `_config.conf` 文件，将自己的配置信息填写完整。
 
 **第二步，设置定时运行脚本**：
 在 Linux中，运行下面的命令：
 ```bash
-crontab -e	# 编辑当前用户的crontab文件
+$ crontab -e	# 编辑当前用户的crontab文件
 ```
 添加下面的内容：
 ```bash
