@@ -47,9 +47,10 @@ $ git clone https://github.com/LooEv/duoshuo-comment-notifier.git ~/duoshuo-comm
 
 $ chmod +x ~/duoshuo-comment-notifier/comment_notifier.py	#这一步很重要！
 ```
-然后编辑 `_config.conf` 文件，将自己的配置信息填写完整。
 
-**第二步，设置定时运行脚本**：
+**第二步，编辑 `_config.conf` 文件，将自己的配置信息填写完整。**
+
+**第三步，设置定时运行脚本**：
 在 Linux中，运行下面的命令：
 ```bash
 $ crontab -e	# 编辑当前用户的crontab文件

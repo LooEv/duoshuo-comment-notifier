@@ -6,12 +6,16 @@ import smtplib
 from email.mime.text import MIMEText
 from email.header import Header
 from email.utils import formataddr, parseaddr
-from datetime import datetime
 
 try:
-    from ConfigParser import ConfigParser
-except:
-    from configparser import ConfigParser
+    from ConfigParser import ConfigParser  # python2
+except ImportError:
+    from configparser import ConfigParser  # python3
+
+try:
+    from urllib.parse import quote  # python3
+except ImportError:
+    from urllib import quote  # python2
 
 import requests
 import logging, logging.handlers
@@ -155,7 +159,7 @@ def email_content(comment_count, metas):
         return content
     content = ['<p>' + header + '<br></p>', ]
     for index, meta in enumerate(metas):
-        thread_key = meta['thread_key']  # 备份原始 thread_key，用于合成你的文章网址
+        thread_key = quote(meta['thread_key'], safe=':+-/')  # 备份原始 thread_key，用于合成你的文章网址
         meta['created_at'] = meta['created_at'].replace('T', ' ').replace('+08:00', '')
         meta['thread_key'] = get_article_title(meta)
         if comment_count == 1:
@@ -176,7 +180,7 @@ def format_email_header(s):
 
 
 def generate_email_msg(content, message_type=None):
-    now = datetime.strftime(datetime.now(), '%Y-%m-%d %H:%M')
+    now = time.strftime('%Y-%m-%d %H:%M', time.localtime())
     if message_type == 'comment':
         me_header = u'多说评论提醒'
         sub = u'新评论提醒{0}'
