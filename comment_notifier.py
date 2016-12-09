@@ -2,6 +2,7 @@
 # encoding: utf-8
 # Author: LooEv
 
+
 import smtplib
 from email.mime.text import MIMEText
 from email.header import Header
@@ -19,7 +20,6 @@ except ImportError:
 
 import requests
 import logging, logging.handlers
-import platform
 import time
 import sys
 import os
@@ -32,6 +32,9 @@ config = {}
 dir_name = os.path.dirname(os.path.abspath(__file__))
 config_file = dir_name + os.sep + '_config.conf'
 action_counter_file = dir_name + os.sep + 'action_counter.log'
+file_of_mistakes = dir_name + os.sep + 'mistakes.log'
+the_number_of_mistakes = 0
+log_file = dir_name + os.sep + 'notifier.log'
 duoshuo_url = 'http://duoshuo.com/'
 
 # log_url 用于获取多说评论后台操作日志，所有的评论都包括在里面
@@ -67,25 +70,44 @@ class BufferingSMTPHandler(logging.handlers.BufferingHandler):
         except Exception as e:
             logger.exception(e)
         finally:
-            if content:
-                send_email('\n\n'.join(content))
+            if the_number_of_mistakes == -2:
+                with open(file_of_mistakes, 'w') as f:
+                    f.write('mistakes:0')
+            else:
+                if content and (the_number_of_mistakes < 2):
+                    # 如果连续运行失败的次数大于两次，就不再发生提醒邮件，如果一直发太影响心情了
+                    send_email(u'第{0}次运行出错\n'.format(the_number_of_mistakes + 1) + '\n\n'.join(content))
+
+                elif content and (the_number_of_mistakes > 0) and (the_number_of_mistakes % 50 == 0):
+                    # 如果连续运行失败的次数为50的倍数，即每50次运行失败就发送邮件提醒你修复脚本
+                    # 如果你设置的定时任务间隔大，比如1天运行一次，请自行修改上面的判断条件，以便你及时修复脚本
+                    s = u'多说评论邮件提醒脚本已经第{0}次运行失败了，请尽快查找原因！\n'.format(the_number_of_mistakes)
+                    send_email(s + '\n\n'.join(content))
+
+                if content:
+                    with open(file_of_mistakes, 'w') as f:
+                        f.write('mistakes:' + str(the_number_of_mistakes + 1))
             self.release()
             del content
 
 
 def set_logger():
+    get_the_number_of_mistakes()
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.DEBUG)
     ch = logging.StreamHandler()
     ch.setLevel(logging.DEBUG)
-    log_name = (dir_name + os.sep + 'notifier.log')
-    fh = logging.FileHandler(filename=log_name)
-    fh.setLevel(logging.ERROR)
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    fh = logging.FileHandler(filename=log_file)
+    if the_number_of_mistakes <= 1:
+        fh.setLevel(logging.ERROR)
+    else:
+        # 防止导致脚本运行失败的错误的详细信息反复写入日志，只需写入简要的错误说明即可，控制日志文件的大小
+        fh.setLevel(logging.CRITICAL)
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(lineno)-3d - %(message)s')
     ch.setFormatter(formatter)
     fh.setFormatter(formatter)
     log_send = BufferingSMTPHandler(10)
-    log_send.setLevel(logging.ERROR)
+    log_send.setLevel(logging.CRITICAL)
     logger.addHandler(log_send)
     logger.addHandler(ch)
     logger.addHandler(fh)
@@ -96,43 +118,49 @@ def get_config():
     conf = ConfigParser()
     try:
         conf.read(config_file)  # 请将配置文件放在当前目录下
-    except IOError as e:
+        sections = ['duoshuo_account', 'email_info']
+        for section in sections:
+            for key, value in conf.items(section):
+                config[key] = value
+    except Exception as e:
         logger.exception(e)
-    sections = ['duoshuo_account', 'email_info', 'period_of_check']
-    for section in sections:
-        for key, value in conf.items(section):
-            config[key] = value
+        logger.error(u'读取配置文件失败！！！请正确配置，否则无法发送邮件。')
+        sys.exit(1)
     logger.debug(u'读取配置文件')
 
 
 def get_duoshuo_log(url):
     first = False
     if os.path.isfile(action_counter_file):
-        f = open(action_counter_file)
-        last_counter = int(f.read().splitlines()[0])
+        with open(action_counter_file) as f:
+            last_counter = int(f.read().splitlines()[0])
     else:
         logger.debug(u'没有找到action_counter.log文件，我假设你博客的留言你已经全部看过，也就是没有新留言！')
         last_counter = 0
         first = True
+    counter = ''
     try:
         my_headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/51.0.2704.103 Safari/537.36',
             'Accept-Encoding': 'gzip'}
         req = requests.get(url, headers=my_headers, timeout=10)
+    except Exception as e:
+        logger.exception(e)
+        logger.critical(u'获取多说评论后台日志失败！')
+        raise
+    else:
         data = req.json()
         if data['code'] == 0:
             logger.debug(u'获取多说评论后台操作日志成功')
             counter = len(data['response'])
-            with open(action_counter_file, 'w') as f:
-                f.write(str(counter))
-            if counter == 0:
+            if counter == 0 or first or last_counter == 0:
                 return
             if last_counter != counter:
-                if first:
-                    return
                 return data, last_counter, counter
-    except Exception as e:
-        logger.exception(e)
+    finally:
+        with open(action_counter_file, 'w') as f:
+            f.write(str(counter) if counter else str(last_counter))
+            f.write('\nlast checked time: {0}'.format(time.ctime()))
 
 
 def get_article_title(meta):
@@ -150,12 +178,11 @@ def get_article_title(meta):
 
 
 def email_content(comment_count, metas):
-    header = u'你有%d条新评论' % comment_count
+    header = u'你有{0}条新评论'.format(comment_count)
     log_msg = header + u'，正在生成邮件内容'
     logger.debug(log_msg)
     if comment_count > 20:
-        content = u'<p>你很厉害<br>' + header \
-                  + u'<br>(由于新评论数过多，请登录 %s 查看详情~.~)</p>' % duoshuo_url
+        content = u'<p>你很厉害<br>{0}<br>(由于新评论数过多，请登录 {1} 查看详情~.~)</p>'.format(header, duoshuo_url)
         return content
     content = ['<p>' + header + '<br></p>', ]
     for index, meta in enumerate(metas):
@@ -165,7 +192,7 @@ def email_content(comment_count, metas):
         if comment_count == 1:
             order = ''
         else:
-            order = u'第%d条新评论：<br>' % (index + 1)
+            order = u'第{0}条新评论：<br>'.format(index + 1)
         meta['message'] = meta['message'].replace(r'\/', r'/').replace(r'\"', r'"')
         comment_info = template['comment_info'] % meta
         click = u'<br>点击查看：{0}{1}<br>'.format(config['myself_author_url'], unicode(thread_key))
@@ -181,16 +208,21 @@ def format_email_header(s):
 
 def generate_email_msg(content, message_type=None):
     now = time.strftime('%Y-%m-%d %H:%M', time.localtime())
+    file_size_warning = ''
+    if os.path.isfile(log_file):
+        if (os.path.getsize(log_file) / 1024.0 / 1024.0) > 200:
+            file_size_warning = u'温馨提示：脚本日志文件过大，建议删除。'
     if message_type == 'comment':
         me_header = u'多说评论提醒'
         sub = u'新评论提醒{0}'
         _subtype = 'html'
-        content = '<html><body>' + content + '</body></html>'
+        content = u'<html><body>{0}<p>{1}</p></body></html>'.format(content, file_size_warning)
     else:
         # when message_type is 'log'
         me_header = u'Comment notifier日志'
         sub = u'脚本出现错误{0}'
         _subtype = 'plain'
+        content = content + '\n' + file_size_warning
     me = me_header + '<' + config['from_address'] + '>'
     msg = MIMEText(content, _subtype=_subtype, _charset='utf-8')
     msg['Subject'] = Header(sub.format(now), 'utf-8').encode()
@@ -206,10 +238,11 @@ def send_email(content, message_type=None):
         server.connect(config['email_host'])
         server.login(config['from_address'], config['email_password'])
         server.sendmail(config['from_address'], config['to_address'], msg.as_string())
-        logger.debug(u'邮件发送成功')
+        logger.debug(u'{0}邮件发送成功'.format(u'评论提醒' if message_type == 'comment' else u'日志提醒'))
         server.quit()
     except Exception as e:
         logger.exception(e)
+        logger.error(u'邮件发送失败！')
 
 
 def handler():
@@ -230,31 +263,32 @@ def handler():
     return content
 
 
+def get_the_number_of_mistakes():
+    global the_number_of_mistakes
+    if os.path.isfile(file_of_mistakes):
+        with open(file_of_mistakes) as f:
+            the_number_of_mistakes = int(f.read().split(':')[1])
+
+
 def monitor():
     logger.debug(u'脚本开始运行...')
     get_config()
-
-    # 如有需要，请自行修改此处代码
-    period_of_check = int(config['period']) if platform.system().lower() == "windows" else -1
-    while 1:
+    try:
         content = handler()
         if content:
             send_email(content, message_type='comment')
-        else:
+    except Exception as e:
+        logger.exception(e)
+    else:
+        global the_number_of_mistakes
+        the_number_of_mistakes = -2
+        if not content:
             logger.debug(u'暂时还没有新评论')
-        if period_of_check > 0:
-            logger.debug(u'正在等待({0}s)下一次检查...'.format(period_of_check))
-            time.sleep(period_of_check)
-        else:
-            break
-
-
-if __name__ == '__main__':
-    try:
-        logger = set_logger()
-        monitor()
     finally:
         # 如果脚本出现问题，确保日志会通过邮件发送给你
         logging.shutdown()
-        with open(action_counter_file, 'a') as f:
-            f.write('\nlast checked time: ' + time.ctime())
+
+
+if __name__ == '__main__':
+    logger = set_logger()
+    monitor()
