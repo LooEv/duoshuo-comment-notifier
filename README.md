@@ -11,15 +11,21 @@ $ pip install requests
 ## 实现原理
 这是获取 [多说评论后台操作日志](http://dev.duoshuo.com/docs/50037b11b66af78d0c000009) 的官方说明。通过 `requests` 获取博客的评论日志，判断是否产生了新的日志，然后进一步判断是否是别人的评论或者回复（因为你自己回复别人也会产生操作日志），如果条件成立，则发送邮件；否则，等待下一次 check。另外，如果在脚本运行过程中出现问题，脚本会将错误信息以邮件的形式发送给我们，以便我们及时处理。
 
+## 注意事项
+请确保你开启了多说评论的通知提醒（在“个人资料”选项中填写邮箱地址），并且选择**每条新回复都提醒我**。因为只有这样设置，你在其他人的博客中留了言，然后别人回复了你，或者在你自己的博客中，别人回复了你，才能收到多说官方的邮件提醒。
+而我编写的这个脚本，也是用于你自己博客中留言的邮件提醒。在你自己的博客中，如果别人回复了你（注意区分概念，是回复了你的某一条评论），多说评论官方会发送邮件提醒，此时，脚本就应该判断这条回复的父评论的作者是否是自己，如果是脚本就不发送提醒邮件，以免重复提醒。
+![设置多说](http://ocf3ikxr2.bkt.clouddn.com/python/duoshuo_settings.jpg)
+
 ## 结果展示
-1. 如果新评论数 <= 20，那么显示详细的评论信息，效果如下：
-![效果展示1](http://ocf3ikxr2.bkt.clouddn.com/python/duoshuo_comments.png)
+1. 如果新评论数 <= 20，那么显示详细的评论信息，并将文章题目设置为超链接，可以点击访问该文章，效果如下：
+![效果展示1](http://ocf3ikxr2.bkt.clouddn.com/python/duoshuo_comment1.jpg)
 
 2. 如果新评论数 > 20，就只是提示功能（显示过多反而不好），如下：
-![效果展示2](http://ocf3ikxr2.bkt.clouddn.com/python/duoshuo_comments2.png)
+![效果展示2](http://ocf3ikxr2.bkt.clouddn.com/python/duoshuo_comment2.jpg)
 
 3. 正如下面图片中展示的一样，脚本运行发生错误，邮件提示我“获取多说评论后台日志失败”，果然我检测多说网，那天晚上真的宕机了，不过第二天又恢复正常了~.~
-![效果展示3](http://ocf3ikxr2.bkt.clouddn.com/python/duoshuocomment3.png)
+![效果展示3](http://ocf3ikxr2.bkt.clouddn.com/python/duoshuo_comment3.jpg)
+
 -----
 ## 配置文件 (_config.conf)
 ```
@@ -74,7 +80,6 @@ $ crontab -e	# 编辑当前用户的crontab文件
 * 当脚本由于某些原因运行失败，比如无法获取多说网的数据，如果连续运行失败的次数 <= 2，就发送提醒邮件，提醒你检查原因；如果连续运行失败的次数 > 2，就不再发送邮件，因为如果我们暂时不方便修复脚本，提醒邮件就会一直发，让人心烦，所以需要设置这个判断功能。
 * 如果脚本连续运行失败的次数过多，而只会发送两封提醒邮件，如果你太忙很容易忘记这件事儿。为了不让你忘记检查原因，就每隔一定时间重新发送提醒邮件给你，发送邮件的周期请自行修改，因为这个周期需要根据你设置的执行脚本的间隔周期调整，才能起到既提醒了你又不扰人的效果。
 * 如果脚本运行的日志文件过大，会发送邮件提醒你删除日志（这种情况应该很少会出现，不过以防万一）。
-
 
 ## 实现细节
 ### 兼容python2和3
@@ -210,26 +215,65 @@ def get_duoshuo_log(url):
 
 * **处理评论日志并生成邮件内容**
 ```python
+def get_title_and_parent_comment(meta):
+    first = True
+    max_pages = 1
+    article_title = unicode(meta['thread_key'])
+    parent_comment = ''
+    parent_author_name = ''
+    recursion = 2 if (not meta['parent_id']) else 50
+    myself_author_id = config['myself_author_id']
+    try:
+        for page in xrange(1, recursion):
+            if page > max_pages:
+                break
+            article_info_url = template['article_info_url'] % (meta['thread_id'], config['short_name'], page)
+            req = requests.get(article_info_url, timeout=10)
+            data = req.json()
+            if data['code'] == 0:
+                if first:
+                    article_title = unicode(data['thread']['title'])
+                    max_pages = data['cursor']['pages']
+                    first = False
+                if recursion > 2:
+                    try:
+                        author_id = data['parentPosts'][meta['parent_id']]['author_id']
+                        if author_id == myself_author_id:
+                            return
+                        else:
+                            parent_author_name = unicode(data['parentPosts'][meta['parent_id']]['author']['name'])
+                            parent_comment = unicode(data['parentPosts'][meta['parent_id']]['message'])
+                    except:
+                        continue
+        return article_title, parent_comment, parent_author_name
+    except Exception as e:
+        logger.exception(e)
+        logger.critical(u'获取文章题目、父评论失败')
+
 def email_content(comment_count, metas):
-    header = u'你有%d条新评论' % comment_count
-    log_msg = header + u'，正在生成邮件内容'
+    header = u'你有{0}条新评论'.format(comment_count)
+    log_msg = u'{0}，正在生成邮件内容'.format(header)
     logger.debug(log_msg)
     if comment_count > 20:
-        content = u'<p>你很厉害<br>' + header + u'<br>(由于新评论数过多，请登录 %s 查看详情~.~)</p>' % duoshuo_url
+        content = u'<p>你的博客很热闹<br>{0}<br>(由于新评论数过多，请登录 {1} 查看详情~.~)</p>'.format(header, duoshuo_url)
         return content
-    content = ['<p>' + header + '<br></p>', ]
+    content = ['<p>' + header + '<br><br></p>', ]
     for index, meta in enumerate(metas):
         thread_key = quote(meta['thread_key'], safe=':+-/')  # 备份原始 thread_key，用于合成你的文章网址
         meta['created_at'] = meta['created_at'].replace('T', ' ').replace('+08:00', '')
-        meta['thread_key'] = get_article_title(meta)
+        meta['article_url'] = config['myself_author_url'] + unicode(thread_key)
+        if not meta['author_url']:
+            meta['author_url'] = u'无'
         if comment_count == 1:
             order = ''
         else:
-            order = u'第%d条新评论：<br>' % (index + 1)
+            order = u'第{0}条新评论：<br>'.format(index + 1)
         meta['message'] = meta['message'].replace(r'\/', r'/').replace(r'\"', r'"')
-        comment_info = template['comment_info'] % meta
-        click = u'<br>点击查看：{0}{1}<br>'.format(config['myself_author_url'], unicode(thread_key))
-        comment = '<p>' + order + '<br>'.join(line.strip() for line in comment_info.splitlines()) + click + '</p>'
+        if not meta['parent_comment']:
+            comment_info = template['comment_info_1'] % meta
+        else:
+            comment_info = template['comment_info_2'] % meta
+        comment = '<p>' + order + '<br>'.join(line.strip() for line in comment_info.splitlines()) + '<br><br></p>'
         content.append(comment)
     return ''.join(content)
 
@@ -243,14 +287,21 @@ def handler():
     myself_author_id = config['myself_author_id']
     for i in xrange(counter - last_counter):
         if data['response'][i]['action'] == 'create' and data['response'][i]['meta']['author_id'] != myself_author_id:
-            metas.append(data['response'][i]['meta'])
+            title_parent_comment = get_title_and_parent_comment(data['response'][i]['meta'])
+            if not title_parent_comment:
+                continue
+            else:
+                data['response'][i]['meta']['article_title'] = title_parent_comment[0]
+                data['response'][i]['meta']['parent_comment'] = title_parent_comment[1]  # 父评论有可能是 ''
+                data['response'][i]['meta']['parent_author_name'] = title_parent_comment[2]  # 父评论的作者昵称有可能是 ''
+                metas.append(data['response'][i]['meta'])
     if not metas:
         return
     comment_count = len(metas)
     content = email_content(comment_count, metas)
     return content
 ```
-  进一步判断产生的新的操作动态的 `action` 是否是 `create` ，以及是否是自己回复别人或者删除评论引起的操作动态的变化。如果条件成立，就意味着有新的评论（是件儿高兴事儿，哈哈）。如果新的评论数超过20条，就不显示详细信息。为了在邮件中显示评论中包含的表情和网址，我以 html 的形式发送邮件并使用 `quote` 编码网址。
+  进一步判断产生的新的操作动态的 `action` 是否是 `create` ，以及是否是自己回复别人或者删除评论引起的操作动态的变化。如果条件成立，就意味着有新的评论（是件儿高兴事儿，哈哈）。接着判断新评论是否有父评论，如果有则获取父评论的内容以及作者，将其显示在邮件中。 如果新的评论数超过20条，就不显示详细信息。为了在邮件中显示评论中包含的表情和网址，我以 html 的形式发送邮件并使用 `quote` 编码网址。
 
 * **生成message，发送邮件**
 ```python
@@ -259,16 +310,22 @@ def format_email_header(s):
     return formataddr((Header(name, 'utf-8').encode(), addr))
 
 def generate_email_msg(content, message_type=None):
-    now = datetime.strftime(datetime.now(), '%Y-%m-%d %H:%M')
+    now = time.strftime('%Y-%m-%d %H:%M', time.localtime())
+    file_size_warning = ''
+    if os.path.isfile(log_file):
+        if (os.path.getsize(log_file) / 1024.0 / 1024.0) > 200:
+            file_size_warning = u'温馨提示：脚本日志文件过大，建议删除。'
     if message_type == 'comment':
         me_header = u'多说评论提醒'
         sub = u'新评论提醒{0}'
         _subtype = 'html'
-        content = '<html><body>' + content + '</body></html>'
+        content = u'<html><body>{0}<p>{1}</p></body></html>'.format(content, file_size_warning)
     else:
+        # when message_type is 'log'
         me_header = u'Comment notifier日志'
         sub = u'脚本出现错误{0}'
         _subtype = 'plain'
+        content = content + '\n' + file_size_warning
     me = me_header + '<' + config['from_address'] + '>'
     msg = MIMEText(content, _subtype=_subtype, _charset='utf-8')
     msg['Subject'] = Header(sub.format(now), 'utf-8').encode()
@@ -283,16 +340,13 @@ def send_email(content, message_type=None):
         server.connect(config['email_host'])
         server.login(config['from_address'], config['email_password'])
         server.sendmail(config['from_address'], config['to_address'], msg.as_string())
-        logger.debug(u'邮件发送成功')
+        logger.debug(u'{0}邮件发送成功'.format(u'评论提醒' if message_type == 'comment' else u'日志提醒'))
         server.quit()
-        if message_type == 'comment':
-            global the_number_of_mistakes
-            the_number_of_mistakes = -2
     except Exception as e:
         logger.exception(e)
         logger.error(u'邮件发送失败！')
 ```
-  由于此脚本需要发送两类邮件，一类是新评论的提醒邮件，一类是脚本运行失败的日志邮件，所以设置了 `message_type` 参数。如果你想使用带有中文的发件人发送邮件，那么 `format_email_header` 函数是需要的。因为如果包含中文，需要通过 `Header` 对象进行编码。如果是新评论的提醒邮件，那么发送 html 形式的邮件；如果是日志邮件，则发送纯文本格式的邮件。
+  由于此脚本需要发送两类邮件，一类是新评论的提醒邮件，一类是脚本运行失败的日志邮件，所以设置了 `message_type` 参数。如果你想使用带有中文的发件人发送邮件，那么 `format_email_header` 函数是需要的。因为如果包含中文，需要通过 `Header` 对象进行编码。如果是新评论的提醒邮件，那么发送 html 形式的邮件；如果是日志邮件，则发送纯文本格式的邮件。如果脚本日志文件过大，就在发送邮件的时候附带温馨提醒。
 
 * **监控器**
 ```python
@@ -303,10 +357,13 @@ def monitor():
         content = handler()
         if content:
             send_email(content, message_type='comment')
-    except Exception:
-        pass
+    except Exception as e:
+        logger.exception(e)
     else:
-        logger.debug(u'暂时还没有新评论')
+        global the_number_of_mistakes
+        the_number_of_mistakes = -2
+        if not content:
+            logger.debug(u'暂时还没有新评论')
     finally:
         # 如果脚本出现问题，确保日志会通过邮件发送给你
         logging.shutdown()

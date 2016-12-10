@@ -43,14 +43,21 @@ template = {
     'log_url':
         "http://api.duoshuo.com/log/list.json?order=desc&short_name=%(short_name)s&secret=%(secret)s&limit=200",
     'article_info_url':
-        "http://api.duoshuo.com/threads/listPosts.json?thread_key=%s&short_name=%s&page=1&limit=10",
-    'comment_info':
-        u"""用户昵称：%(author_name)s
-            IP地址：  %(ip)s
+        "http://api.duoshuo.com/threads/listPosts.json?order=asc&thread_id=%s&short_name=%s&page=%d&limit=100",
+    'comment_info_1':
+        u"""<span style='color:red'>%(author_name)s</span> 在 <a href='%(article_url)s'>%(article_title)s</a> 中发表了评论：
+            评论内容：%(message)s
+            IP地址：%(ip)s
             用户网站：%(author_url)s
-            评论文章：%(thread_key)s
-            评论时间：%(created_at)s
-            评论内容：%(message)s"""
+            评论时间：%(created_at)s""",
+    'comment_info_2':
+        u"""在文章 <a href='%(article_url)s'>%(article_title)s</a> 中：\
+            <span style='color:red'>%(author_name)s</span> 回复了 <span style='color:red'>%(parent_author_name)s</span>:
+            父评论：%(parent_comment)s
+            回复内容：%(message)s
+            IP地址：%(ip)s
+            用户网站：%(author_url)s
+            评论时间：%(created_at)s"""
 }
 
 
@@ -163,40 +170,66 @@ def get_duoshuo_log(url):
             f.write('\nlast checked time: {0}'.format(time.ctime()))
 
 
-def get_article_title(meta):
-    article_info_url = template['article_info_url'] % (unicode(meta['thread_key']), config['short_name'])
+def get_title_and_parent_comment(meta):
+    first = True
+    max_pages = 1
+    article_title = unicode(meta['thread_key'])
+    parent_comment = ''
+    parent_author_name = ''
+    recursion = 2 if (not meta['parent_id']) else 50
+    myself_author_id = config['myself_author_id']
     try:
-        req = requests.get(article_info_url, timeout=10)
-        data = req.json()
-        if data['code'] == 0:
-            article_title = data['thread']['title']
-            return unicode(article_title)
-        else:
-            return unicode(meta['thread_key'])
+        for page in xrange(1, recursion):
+            if page > max_pages:
+                break
+            article_info_url = template['article_info_url'] % (meta['thread_id'], config['short_name'], page)
+            req = requests.get(article_info_url, timeout=10)
+            data = req.json()
+            if data['code'] == 0:
+                if first:
+                    article_title = unicode(data['thread']['title'])
+                    max_pages = data['cursor']['pages']
+                    first = False
+                if recursion > 2:
+                    try:
+                        author_id = data['parentPosts'][meta['parent_id']]['author_id']
+                        if author_id == myself_author_id:
+                            return
+                        else:
+                            parent_author_name = unicode(data['parentPosts'][meta['parent_id']]['author']['name'])
+                            parent_comment = unicode(data['parentPosts'][meta['parent_id']]['message'])
+                    except:
+                        continue
+        return article_title, parent_comment, parent_author_name
     except Exception as e:
         logger.exception(e)
+        logger.critical(u'获取文章题目、父评论失败')
 
 
 def email_content(comment_count, metas):
     header = u'你有{0}条新评论'.format(comment_count)
-    log_msg = header + u'，正在生成邮件内容'
+    log_msg = u'{0}，正在生成邮件内容'.format(header)
     logger.debug(log_msg)
     if comment_count > 20:
-        content = u'<p>你很厉害<br>{0}<br>(由于新评论数过多，请登录 {1} 查看详情~.~)</p>'.format(header, duoshuo_url)
+        content = u'<p>你的博客很热闹<br>{0}<br>(由于新评论数过多，请登录 {1} 查看详情~.~)</p>'.format(header, duoshuo_url)
         return content
-    content = ['<p>' + header + '<br></p>', ]
+    content = ['<p>' + header + '<br><br></p>', ]
     for index, meta in enumerate(metas):
         thread_key = quote(meta['thread_key'], safe=':+-/')  # 备份原始 thread_key，用于合成你的文章网址
         meta['created_at'] = meta['created_at'].replace('T', ' ').replace('+08:00', '')
-        meta['thread_key'] = get_article_title(meta)
+        meta['article_url'] = config['myself_author_url'] + unicode(thread_key)
+        if not meta['author_url']:
+            meta['author_url'] = u'无'
         if comment_count == 1:
             order = ''
         else:
             order = u'第{0}条新评论：<br>'.format(index + 1)
         meta['message'] = meta['message'].replace(r'\/', r'/').replace(r'\"', r'"')
-        comment_info = template['comment_info'] % meta
-        click = u'<br>点击查看：{0}{1}<br>'.format(config['myself_author_url'], unicode(thread_key))
-        comment = '<p>' + order + '<br>'.join(line.strip() for line in comment_info.splitlines()) + click + '</p>'
+        if not meta['parent_comment']:
+            comment_info = template['comment_info_1'] % meta
+        else:
+            comment_info = template['comment_info_2'] % meta
+        comment = '<p>' + order + '<br>'.join(line.strip() for line in comment_info.splitlines()) + '<br><br></p>'
         content.append(comment)
     return ''.join(content)
 
@@ -255,7 +288,14 @@ def handler():
     myself_author_id = config['myself_author_id']
     for i in xrange(counter - last_counter):
         if data['response'][i]['action'] == 'create' and data['response'][i]['meta']['author_id'] != myself_author_id:
-            metas.append(data['response'][i]['meta'])
+            title_parent_comment = get_title_and_parent_comment(data['response'][i]['meta'])
+            if not title_parent_comment:
+                continue
+            else:
+                data['response'][i]['meta']['article_title'] = title_parent_comment[0]
+                data['response'][i]['meta']['parent_comment'] = title_parent_comment[1]  # 父评论有可能是 ''
+                data['response'][i]['meta']['parent_author_name'] = title_parent_comment[2]  # 父评论的作者昵称有可能是 ''
+                metas.append(data['response'][i]['meta'])
     if not metas:
         return
     comment_count = len(metas)
