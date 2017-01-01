@@ -32,6 +32,8 @@ config = {}
 dir_name = os.path.dirname(os.path.abspath(__file__))
 config_file = dir_name + os.sep + '_config.conf'
 action_counter_file = dir_name + os.sep + 'action_counter.log'
+last_counter = 0
+comments_changed = False
 file_of_mistakes = dir_name + os.sep + 'mistakes.log'
 the_number_of_mistakes = 0
 log_file = dir_name + os.sep + 'notifier.log'
@@ -92,6 +94,10 @@ class BufferingSMTPHandler(logging.handlers.BufferingHandler):
                     send_email(s + '\n\n'.join(content))
 
                 if content:
+                    if comments_changed:
+                        with open(action_counter_file, 'w') as f:
+                            f.write(str(last_counter))
+                            f.write('\nlast checked time: {0}'.format(time.ctime()))
                     with open(file_of_mistakes, 'w') as f:
                         f.write('mistakes:' + str(the_number_of_mistakes + 1))
             self.release()
@@ -138,12 +144,12 @@ def get_config():
 
 def get_duoshuo_log(url):
     first = False
+    global last_counter, comments_changed
     if os.path.isfile(action_counter_file):
         with open(action_counter_file) as f:
             last_counter = int(f.read().splitlines()[0])
     else:
         logger.debug(u'没有找到action_counter.log文件，我假设你博客的留言你已经全部看过，也就是没有新留言！')
-        last_counter = 0
         first = True
     counter = ''
     try:
@@ -163,6 +169,7 @@ def get_duoshuo_log(url):
             if counter == 0 or first or last_counter == 0:
                 return
             if last_counter != counter:
+                comments_changed = True
                 return data, last_counter, counter
     finally:
         with open(action_counter_file, 'w') as f:
